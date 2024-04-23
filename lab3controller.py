@@ -1,0 +1,86 @@
+# Lab 3 Skeleton
+#
+# Based on of_tutorial by James McCauley
+
+from pox.core import core
+import pox.openflow.libopenflow_01 as of
+
+log = core.getLogger()
+
+class Firewall (object):
+  """
+  A Firewall object is created for each switch that connects.
+  A Connection object for that switch is passed to the __init__ function.
+  """
+  def __init__ (self, connection):
+    # Keep track of the connection to the switch so that we can
+    # send it messages!
+    self.connection = connection
+
+    # This binds our PacketIn event listener
+    connection.addListeners(self)
+
+  def do_firewall (self, packet, packet_in):
+    # The code in here will be executed for every packet.
+    
+    tcp_packet = packet.find('tcp')
+    arp_packet = packet.find('arp')
+    ipv4_packet = packet.find('ipv4')
+
+    #if tcp_packet and arp_packet:
+    if ipv4_packet and tcp_packet:
+      msg = of.ofp_flow_mod() #define a openflow entry
+      msg.priority = 1 
+      self.accept(packet,packet_in)
+      print("Any ipv4 and tcp -> accept and flood")
+
+    elif arp_packet:
+      msg = of.ofp_flow_mod() #define a openflow entry
+      msg.priority = 2
+      self.accept(packet,packet_in)
+      print("Any and arp -> accept and flood")
+
+    else:
+      self.drop(packet,packet_in)
+      print("Any ipv4 and any ipv4 or any other protocol -> drop")
+
+  def accept(self, packet, packet_in):
+      msg = of.ofp_flow_mod() #define a openflow entry
+      msg.match = of.ofp_match.from_packet(packet)
+      msg.idle_timeout = 100
+      msg.hard_timeout = 300
+      msg.buffer_id = packet_in.buffer_id
+      msg.actions.append(of.ofp_action_output(port = of.OFPP_FLOOD)) # ACTION FLOOD (accept the packet)
+      self.connection.send(msg)
+
+  def drop(self, packet, packet_in):
+      msg = of.ofp_flow_mod()
+      msg.match = of.ofp_match.from_packet(packet)
+      msg.idle_timeout = 100
+      msg.hard_timeout = 300 
+      msg.priority = 3
+      msg.buffer_id = packet_in.buffer_id
+      self.connection.send(msg)
+
+
+  def _handle_PacketIn (self, event):
+    """
+    Handles packet in messages from the switch.
+    """
+
+    packet = event.parsed # This is the parsed packet data.
+    if not packet.parsed:
+      log.warning("Ignoring incomplete packet")
+      return
+
+    packet_in = event.ofp # The actual ofp_packet_in message.
+    self.do_firewall(packet, packet_in)
+
+def launch ():
+  """
+  Starts the component
+  """
+  def start_switch (event):
+    log.debug("Controlling %s" % (event.connection,))
+    Firewall(event.connection)
+  core.openflow.addListenerByName("ConnectionUp", start_switch)
